@@ -4,7 +4,7 @@ import glob
 import time
 from datetime import datetime
 
-MEASURE_INTERVAL = 1.0  # seconds between measurements
+MEASURE_INTERVAL = 0.5  # seconds between measurements
 
 
 def find_usb_serial_ports():

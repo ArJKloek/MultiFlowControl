@@ -2,6 +2,7 @@ import propar
 import sys
 import glob
 import time
+import argparse
 from datetime import datetime
 
 MEASURE_INTERVAL = 0.5  # seconds between measurements
@@ -98,10 +99,86 @@ def measure_loop(instruments):
         time.sleep(MEASURE_INTERVAL)
 
 
+def benchmark_loop(instruments, duration_seconds):
+    """Benchmark maximum read speed by polling measure as fast as possible."""
+    print("\n" + "=" * 70)
+    print(f"Starting benchmark for {duration_seconds:.1f} seconds...")
+    print("=" * 70)
+
+    if duration_seconds <= 0:
+        print("Benchmark duration must be greater than 0.")
+        return
+
+    per_instrument_reads = {item['label']: 0 for item in instruments}
+    per_instrument_errors = {item['label']: 0 for item in instruments}
+
+    total_reads = 0
+    total_errors = 0
+    started = time.perf_counter()
+
+    while True:
+        now = time.perf_counter()
+        if (now - started) >= duration_seconds:
+            break
+
+        for item in instruments:
+            label = item['label']
+            try:
+                _ = item['instrument'].measure
+                per_instrument_reads[label] += 1
+                total_reads += 1
+            except Exception:
+                per_instrument_errors[label] += 1
+                total_errors += 1
+
+    elapsed = time.perf_counter() - started
+    if elapsed <= 0:
+        elapsed = 1e-9
+
+    print(f"Elapsed time: {elapsed:.3f} s")
+    print(f"Total successful reads: {total_reads}")
+    print(f"Total read errors: {total_errors}")
+    print(f"Total read rate: {total_reads / elapsed:.2f} reads/s")
+    print("\nPer instrument:")
+
+    for item in instruments:
+        label = item['label']
+        reads = per_instrument_reads[label]
+        errors = per_instrument_errors[label]
+        print(f"  {label}: {reads / elapsed:.2f} reads/s ({reads} ok, {errors} errors)")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-if len(sys.argv) > 1:
-    ports = sys.argv[1:]
+parser = argparse.ArgumentParser(
+    description="Scan Propar instruments and either stream measurements or run a speed benchmark."
+)
+parser.add_argument(
+    'ports',
+    nargs='*',
+    help="Serial ports to scan, e.g. /dev/ttyUSB0 /dev/ttyUSB1",
+)
+parser.add_argument(
+    '--benchmark',
+    action='store_true',
+    help="Run speed benchmark instead of continuous measurement display.",
+)
+parser.add_argument(
+    '--benchmark-seconds',
+    type=float,
+    default=10.0,
+    help="Benchmark duration in seconds (default: 10).",
+)
+parser.add_argument(
+    '--interval',
+    type=float,
+    default=MEASURE_INTERVAL,
+    help=f"Continuous mode update interval in seconds (default: {MEASURE_INTERVAL}).",
+)
+args = parser.parse_args()
+
+if args.ports:
+    ports = args.ports
 else:
     ports = find_usb_serial_ports()
     if not ports:
@@ -121,6 +198,10 @@ if not all_instruments:
 print(f"\nTotal instruments found: {len(all_instruments)}")
 
 try:
-    measure_loop(all_instruments)
+    MEASURE_INTERVAL = args.interval
+    if args.benchmark:
+        benchmark_loop(all_instruments, args.benchmark_seconds)
+    else:
+        measure_loop(all_instruments)
 except KeyboardInterrupt:
     print("\nMeasurement stopped.")

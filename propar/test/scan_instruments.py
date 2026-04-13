@@ -13,6 +13,13 @@ def find_usb_serial_ports():
     return sorted(candidates)
 
 
+def safe_read_parameter(instrument, dde_number):
+    try:
+        return instrument.readParameter(dde_number)
+    except Exception:
+        return None
+
+
 def scan_port(comport):
     """Scan a single port and return a list of instrument instances with metadata."""
     instruments = []
@@ -35,10 +42,18 @@ def scan_port(comport):
 
             for ch in range(1, channels + 1):
                 instr = propar.instrument(comport, address=address, channel=ch)
-                tag   = instr.readParameter(115)  # User tag
+                tag = safe_read_parameter(instr, 115)  # User tag
                 label = tag if tag else f"Node{address}"
                 if channels > 1:
                     label += f"-ch{ch}"
+
+                model = safe_read_parameter(instr, 91)       # BHT model number
+                firmware = safe_read_parameter(instr, 105)   # Firmware version
+                fluid = safe_read_parameter(instr, 25)       # Fluid name
+                unit = safe_read_parameter(instr, 129)       # Capacity/readout unit
+                setpoint = safe_read_parameter(instr, 9)     # Setpoint (0..32000)
+                measure = safe_read_parameter(instr, 8)      # Measure (0..32000)
+
                 instruments.append({
                     'instrument': instr,
                     'label':      label,
@@ -47,6 +62,9 @@ def scan_port(comport):
                     'channel':    ch,
                 })
                 print(f"      ch{ch}: label={label!r}")
+                print(f"        model={model!r}  firmware={firmware!r}")
+                print(f"        fluid={fluid!r}  unit={unit!r}")
+                print(f"        setpoint={setpoint!r}  measure={measure!r}")
 
     except Exception as e:
         print(f"  Error scanning {comport}: {e}")

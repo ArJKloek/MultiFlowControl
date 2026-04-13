@@ -22,6 +22,13 @@ def safe_read_parameter(instrument, dde_number):
         return None
 
 
+def format_multi_response(response, dde_numbers):
+    values = []
+    for dde_number, entry in zip(dde_numbers, response):
+        values.append(f"p{dde_number}={entry.get('data')!r}")
+    return ", ".join(values)
+
+
 def scan_port(comport):
     """Scan a single port and return a list of instrument instances with metadata."""
     instruments = []
@@ -112,6 +119,7 @@ def benchmark_loop(instruments, duration_seconds):
 
     per_instrument_reads = {item['label']: 0 for item in instruments}
     per_instrument_errors = {item['label']: 0 for item in instruments}
+    last_values = {item['label']: None for item in instruments}
 
     total_reads = 0
     total_errors = 0
@@ -125,8 +133,9 @@ def benchmark_loop(instruments, duration_seconds):
         for item in instruments:
             label = item['label']
             try:
-                _ = item['instrument'].measure
+                value = item['instrument'].measure
                 per_instrument_reads[label] += 1
+                last_values[label] = value
                 total_reads += 1
             except Exception:
                 per_instrument_errors[label] += 1
@@ -148,6 +157,11 @@ def benchmark_loop(instruments, duration_seconds):
         errors = per_instrument_errors[label]
         print(f"  {label}: {reads / elapsed:.2f} reads/s ({reads} ok, {errors} errors)")
 
+    print("\nLast successful read values:")
+    for item in instruments:
+        label = item['label']
+        print(f"  {label}: measure={last_values[label]!r}")
+
 
 def build_parameter_list(instrument, dde_numbers):
     return [instrument.db.get_parameter(dde_number) for dde_number in dde_numbers]
@@ -166,6 +180,7 @@ def benchmark_multi_read_loop(instruments, duration_seconds, dde_numbers):
 
     per_instrument_cycles = {item['label']: 0 for item in instruments}
     per_instrument_errors = {item['label']: 0 for item in instruments}
+    last_values = {item['label']: None for item in instruments}
     parameter_lists = {}
 
     for item in instruments:
@@ -191,6 +206,7 @@ def benchmark_multi_read_loop(instruments, duration_seconds, dde_numbers):
                 response = item['instrument'].read_parameters(parameter_lists[label])
                 if response and all('data' in entry for entry in response):
                     per_instrument_cycles[label] += 1
+                    last_values[label] = response
                     total_cycles += 1
                     total_parameter_reads += len(response)
                 else:
@@ -220,6 +236,15 @@ def benchmark_multi_read_loop(instruments, duration_seconds, dde_numbers):
             f"  {label}: {cycles / elapsed:.2f} cycles/s "
             f"({cycles * len(dde_numbers) / elapsed:.2f} values/s, {cycles} ok, {errors} errors)"
         )
+
+    print("\nLast successful read values:")
+    for item in instruments:
+        label = item['label']
+        response = last_values[label]
+        if response is None:
+            print(f"  {label}: no successful response")
+        else:
+            print(f"  {label}: {format_multi_response(response, dde_numbers)}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

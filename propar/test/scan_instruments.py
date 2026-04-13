@@ -1,11 +1,18 @@
 import propar
 import sys
+import glob
 
-# COM port to scan - change this to match your setup
-COMPORT = 'COM1'
+def find_usb_serial_ports():
+    """Return a list of likely USB serial ports on Linux/Raspberry Pi."""
+    candidates = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
+    return sorted(candidates)
 
+# Default port: auto-detect USB serial on Linux, fall back to COM1 on Windows
 if len(sys.argv) > 1:
     COMPORT = sys.argv[1]
+else:
+    usb_ports = find_usb_serial_ports()
+    COMPORT = usb_ports[0] if usb_ports else 'COM1'
 
 print(f"Scanning for instruments on {COMPORT}...")
 print("-" * 60)

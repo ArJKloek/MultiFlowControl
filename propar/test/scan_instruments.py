@@ -6,6 +6,7 @@ import argparse
 from datetime import datetime
 
 MEASURE_INTERVAL = 0.5  # seconds between measurements
+DEFAULT_BENCHMARK_PARAMETERS = [8, 9, 11]
 
 
 def find_usb_serial_ports():
@@ -148,6 +149,79 @@ def benchmark_loop(instruments, duration_seconds):
         print(f"  {label}: {reads / elapsed:.2f} reads/s ({reads} ok, {errors} errors)")
 
 
+def build_parameter_list(instrument, dde_numbers):
+    return [instrument.db.get_parameter(dde_number) for dde_number in dde_numbers]
+
+
+def benchmark_multi_read_loop(instruments, duration_seconds, dde_numbers):
+    """Benchmark chained read_parameters cycles with multiple DDE parameters."""
+    print("\n" + "=" * 70)
+    print(f"Starting multi-parameter benchmark for {duration_seconds:.1f} seconds...")
+    print(f"Parameters per cycle: {', '.join(str(p) for p in dde_numbers)}")
+    print("=" * 70)
+
+    if duration_seconds <= 0:
+        print("Benchmark duration must be greater than 0.")
+        return
+
+    per_instrument_cycles = {item['label']: 0 for item in instruments}
+    per_instrument_errors = {item['label']: 0 for item in instruments}
+    parameter_lists = {}
+
+    for item in instruments:
+        try:
+            parameter_lists[item['label']] = build_parameter_list(item['instrument'], dde_numbers)
+        except Exception as exc:
+            print(f"Could not prepare parameters for {item['label']}: {exc}")
+            return
+
+    total_cycles = 0
+    total_parameter_reads = 0
+    total_errors = 0
+    started = time.perf_counter()
+
+    while True:
+        now = time.perf_counter()
+        if (now - started) >= duration_seconds:
+            break
+
+        for item in instruments:
+            label = item['label']
+            try:
+                response = item['instrument'].read_parameters(parameter_lists[label])
+                if response and all('data' in entry for entry in response):
+                    per_instrument_cycles[label] += 1
+                    total_cycles += 1
+                    total_parameter_reads += len(response)
+                else:
+                    per_instrument_errors[label] += 1
+                    total_errors += 1
+            except Exception:
+                per_instrument_errors[label] += 1
+                total_errors += 1
+
+    elapsed = time.perf_counter() - started
+    if elapsed <= 0:
+        elapsed = 1e-9
+
+    print(f"Elapsed time: {elapsed:.3f} s")
+    print(f"Total successful cycles: {total_cycles}")
+    print(f"Total parameter values read: {total_parameter_reads}")
+    print(f"Total cycle errors: {total_errors}")
+    print(f"Total cycle rate: {total_cycles / elapsed:.2f} cycles/s")
+    print(f"Total parameter rate: {total_parameter_reads / elapsed:.2f} values/s")
+    print("\nPer instrument:")
+
+    for item in instruments:
+        label = item['label']
+        cycles = per_instrument_cycles[label]
+        errors = per_instrument_errors[label]
+        print(
+            f"  {label}: {cycles / elapsed:.2f} cycles/s "
+            f"({cycles * len(dde_numbers) / elapsed:.2f} values/s, {cycles} ok, {errors} errors)"
+        )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 parser = argparse.ArgumentParser(
@@ -168,6 +242,19 @@ parser.add_argument(
     type=float,
     default=10.0,
     help="Benchmark duration in seconds (default: 10).",
+)
+parser.add_argument(
+    '--benchmark-mode',
+    choices=['single', 'multi'],
+    default='single',
+    help="Benchmark single measure reads or chained multi-parameter read_parameters cycles.",
+)
+parser.add_argument(
+    '--benchmark-params',
+    type=int,
+    nargs='+',
+    default=DEFAULT_BENCHMARK_PARAMETERS,
+    help="DDE parameters to use in multi benchmark mode (default: 8 9 11).",
 )
 parser.add_argument(
     '--interval',
@@ -200,7 +287,10 @@ print(f"\nTotal instruments found: {len(all_instruments)}")
 try:
     MEASURE_INTERVAL = args.interval
     if args.benchmark:
-        benchmark_loop(all_instruments, args.benchmark_seconds)
+        if args.benchmark_mode == 'multi':
+            benchmark_multi_read_loop(all_instruments, args.benchmark_seconds, args.benchmark_params)
+        else:
+            benchmark_loop(all_instruments, args.benchmark_seconds)
     else:
         measure_loop(all_instruments)
 except KeyboardInterrupt:

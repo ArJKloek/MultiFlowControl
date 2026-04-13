@@ -72,7 +72,7 @@ def measure_loop(instruments):
         row = f"{timestamp:<22}"
         for item in instruments:
             try:
-                value = item['instrument'].measure
+                value = item['instrument'].setpoint
                 row += f"{str(value):>{col_w}}"
             except Exception:
                 row += f"{'ERR':>{col_w}}"

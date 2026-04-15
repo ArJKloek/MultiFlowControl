@@ -90,7 +90,8 @@ class FlowChannelDialog(QDialog):
 
         self.lb_icon.setScaledContents(False)
         scaled = pixmap.scaled(
-            self.lb_icon.size(),
+            60,
+            60,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )

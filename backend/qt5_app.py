@@ -9,12 +9,14 @@ import propar
 from serial.tools import list_ports
 from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtGui import QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import QApplication, QDialog, QMainWindow
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UI_DIR = BASE_DIR / "ui"
+ICON_DIR = BASE_DIR / "icon"
 
 
 def safe_float(value) -> Optional[float]:
@@ -65,8 +67,7 @@ class NodeViewerDialog(QDialog):
         self.btnScan.clicked.connect(self.scan_nodes)
         self.btnConnect.clicked.connect(self.connect_selected)
         self.log.setReadOnly(True)
-
-        self.scan_nodes()
+        self.append_log("Press 'Scan' to search for instruments.")
 
     def append_log(self, text: str):
         self.log.append(text)
@@ -138,24 +139,35 @@ class NodeViewerDialog(QDialog):
 class FlowChannelDialog(QDialog):
     def __init__(self, node: NodeInfo, channel: int, parent=None):
         super().__init__(parent)
-        uic.loadUi(str(UI_DIR / "flowchannel.ui"), self)
-
         self.node = node
         self.channel = channel
+
+        node_type = (self.node.type_name or "").upper()
+        self.is_dmfm = "DMFM" in node_type
+        ui_file = "flowchannel_meter.ui" if self.is_dmfm else "flowchannel.ui"
+        uic.loadUi(str(UI_DIR / ui_file), self)
+
         self.capacity_value: Optional[float] = None
         self.last_status = ""
 
         self.instrument = propar.instrument(self.node.port, address=self.node.address, channel=self.channel)
+        self._setup_icon()
 
-        self.advancedFrame.setVisible(False)
+        if hasattr(self, "advancedFrame"):
+            self.advancedFrame.setVisible(False)
 
-        self.ds_setpoint_percent.setRange(0.0, 100.0)
-        self.ds_measure_percent.setRange(0.0, 100.0)
-        self.ds_setpoint_flow.setDecimals(4)
+        if hasattr(self, "ds_setpoint_percent"):
+            self.ds_setpoint_percent.setRange(0.0, 100.0)
+        if hasattr(self, "ds_measure_percent"):
+            self.ds_measure_percent.setRange(0.0, 100.0)
+        if hasattr(self, "ds_setpoint_flow"):
+            self.ds_setpoint_flow.setDecimals(4)
         self.ds_measure_flow.setDecimals(4)
 
-        self.vs_setpoint.setRange(0, 100)
-        self.vs_measure.setRange(0, 100)
+        if hasattr(self, "vs_setpoint"):
+            self.vs_setpoint.setRange(0, 100)
+        if hasattr(self, "vs_measure"):
+            self.vs_measure.setRange(0, 100)
 
         self.le_number.setReadOnly(True)
         self.le_number.setText(f"{self.node.address}-ch{self.channel}")
@@ -166,9 +178,12 @@ class FlowChannelDialog(QDialog):
         self.pb_reload.clicked.connect(self.reload_all)
         self.le_usertag.editingFinished.connect(self.update_usertag)
 
-        self.vs_setpoint.valueChanged.connect(self.on_setpoint_slider_changed)
-        self.ds_setpoint_percent.valueChanged.connect(self.on_setpoint_percent_changed)
-        self.ds_setpoint_flow.valueChanged.connect(self.on_setpoint_flow_changed)
+        if hasattr(self, "vs_setpoint"):
+            self.vs_setpoint.valueChanged.connect(self.on_setpoint_slider_changed)
+        if hasattr(self, "ds_setpoint_percent"):
+            self.ds_setpoint_percent.valueChanged.connect(self.on_setpoint_percent_changed)
+        if hasattr(self, "ds_setpoint_flow"):
+            self.ds_setpoint_flow.valueChanged.connect(self.on_setpoint_flow_changed)
 
         self.timer = QTimer(self)
         self.timer.setInterval(500)
@@ -176,6 +191,32 @@ class FlowChannelDialog(QDialog):
 
         self.reload_all()
         self.timer.start()
+
+    def _setup_icon(self):
+        if not hasattr(self, "lb_icon"):
+            return
+
+        node_type = (self.node.type_name or "").upper()
+        icon_file = None
+        if "DMFC" in node_type:
+            icon_file = ICON_DIR / "massflow.png"
+        elif "DMFM" in node_type:
+            icon_file = ICON_DIR / "massview.png"
+
+        if icon_file is None or not icon_file.exists():
+            return
+
+        pixmap = QPixmap(str(icon_file))
+        if pixmap.isNull():
+            return
+
+        self.lb_icon.setScaledContents(False)
+        scaled = pixmap.scaled(
+            self.lb_icon.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.lb_icon.setPixmap(scaled)
 
     def set_status(self, text: str):
         self.last_status = text
@@ -215,14 +256,19 @@ class FlowChannelDialog(QDialog):
             self.le_fluid.setText(str(fluid))
 
         if unit is not None:
-            self.lb_unit1.setText(str(unit))
-            self.lb_unit2.setText(str(unit))
+            if hasattr(self, "lb_unit1"):
+                self.lb_unit1.setText(str(unit))
+            if hasattr(self, "lb_unit2"):
+                self.lb_unit2.setText(str(unit))
+            if hasattr(self, "lb_unit"):
+                self.lb_unit.setText(str(unit))
 
         capacity_float = safe_float(capacity)
         self.capacity_value = capacity_float
         if capacity_float is not None:
             self.le_capacity.setText(f"{capacity_float:.4f}")
-            self.ds_setpoint_flow.setMaximum(max(capacity_float * 1.2, 1.0))
+            if hasattr(self, "ds_setpoint_flow"):
+                self.ds_setpoint_flow.setMaximum(max(capacity_float * 1.2, 1.0))
             self.ds_measure_flow.setMaximum(max(capacity_float * 1.2, 1.0))
         elif capacity is not None:
             self.le_capacity.setText(str(capacity))
@@ -232,7 +278,8 @@ class FlowChannelDialog(QDialog):
             self.set_status("Ready")
 
     def toggle_advanced(self):
-        self.advancedFrame.setVisible(not self.advancedFrame.isVisible())
+        if hasattr(self, "advancedFrame"):
+            self.advancedFrame.setVisible(not self.advancedFrame.isVisible())
 
     def update_usertag(self):
         text = self.le_usertag.text().strip()
@@ -240,6 +287,8 @@ class FlowChannelDialog(QDialog):
             self.safe_write(115, text)
 
     def on_setpoint_slider_changed(self, value: int):
+        if not hasattr(self, "ds_setpoint_percent"):
+            return
         percent = float(value)
         if abs(self.ds_setpoint_percent.value() - percent) > 0.01:
             self.ds_setpoint_percent.blockSignals(True)
@@ -248,6 +297,8 @@ class FlowChannelDialog(QDialog):
         self.apply_setpoint_percent(percent)
 
     def on_setpoint_percent_changed(self, percent: float):
+        if not hasattr(self, "vs_setpoint"):
+            return
         slider_value = int(round(percent))
         if self.vs_setpoint.value() != slider_value:
             self.vs_setpoint.blockSignals(True)
@@ -256,7 +307,7 @@ class FlowChannelDialog(QDialog):
 
         self.apply_setpoint_percent(percent)
 
-        if self.capacity_value:
+        if self.capacity_value and hasattr(self, "ds_setpoint_flow"):
             flow_value = (percent / 100.0) * self.capacity_value
             if abs(self.ds_setpoint_flow.value() - flow_value) > 1e-6:
                 self.ds_setpoint_flow.blockSignals(True)
@@ -264,7 +315,7 @@ class FlowChannelDialog(QDialog):
                 self.ds_setpoint_flow.blockSignals(False)
 
     def on_setpoint_flow_changed(self, value: float):
-        if self.capacity_value and self.capacity_value > 0:
+        if self.capacity_value and self.capacity_value > 0 and hasattr(self, "ds_setpoint_percent"):
             percent = max(0.0, min(100.0, (value / self.capacity_value) * 100.0))
             if abs(self.ds_setpoint_percent.value() - percent) > 1e-6:
                 self.ds_setpoint_percent.blockSignals(True)
@@ -273,18 +324,24 @@ class FlowChannelDialog(QDialog):
                 self.apply_setpoint_percent(percent)
 
     def apply_setpoint_percent(self, percent: float):
+        if self.is_dmfm:
+            return
         raw_setpoint = int(max(0, min(32000, round((percent / 100.0) * 32000))))
         self.safe_write(9, raw_setpoint)
 
     def refresh_live_values(self):
         measure_raw = self.safe_read(8)
         measure_flow = self.safe_read(205)
-        setpoint_raw = self.safe_read(9)
+        setpoint_raw = self.safe_read(9) if not self.is_dmfm else None
 
         if measure_raw is not None:
             measure_percent = max(0.0, min(100.0, (float(measure_raw) / 32000.0) * 100.0))
-            self.ds_measure_percent.setValue(measure_percent)
-            self.vs_measure.setValue(int(round(measure_percent)))
+            if hasattr(self, "ds_measure_percent"):
+                self.ds_measure_percent.setValue(measure_percent)
+            if hasattr(self, "vs_measure"):
+                self.vs_measure.setValue(int(round(measure_percent)))
+            if hasattr(self, "pb_flow"):
+                self.pb_flow.setValue(int(round(measure_percent)))
 
             if measure_flow is None and self.capacity_value:
                 measure_flow = (measure_percent / 100.0) * self.capacity_value
@@ -296,11 +353,11 @@ class FlowChannelDialog(QDialog):
 
         if setpoint_raw is not None:
             setpoint_percent = max(0.0, min(100.0, (float(setpoint_raw) / 32000.0) * 100.0))
-            if abs(self.ds_setpoint_percent.value() - setpoint_percent) > 0.5:
+            if hasattr(self, "ds_setpoint_percent") and abs(self.ds_setpoint_percent.value() - setpoint_percent) > 0.5:
                 self.ds_setpoint_percent.blockSignals(True)
                 self.ds_setpoint_percent.setValue(setpoint_percent)
                 self.ds_setpoint_percent.blockSignals(False)
-            if self.vs_setpoint.value() != int(round(setpoint_percent)):
+            if hasattr(self, "vs_setpoint") and self.vs_setpoint.value() != int(round(setpoint_percent)):
                 self.vs_setpoint.blockSignals(True)
                 self.vs_setpoint.setValue(int(round(setpoint_percent)))
                 self.vs_setpoint.blockSignals(False)

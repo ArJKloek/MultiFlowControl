@@ -340,16 +340,14 @@ class MainWindow(QMainWindow):
 
         created = 0
         for node in dialog.selected_nodes:
-            channels = max(1, int(node.channels))
-            for channel in range(1, channels + 1):
-                window = FlowChannelDialog(node=node, channel=channel, parent=self)
-                window.setAttribute(Qt.WA_DeleteOnClose, True)
-                window.show()
-                window.destroyed.connect(lambda _, w=window: self._remove_channel_window(w))
-                self.channel_windows.append(window)
-                created += 1
+            window = FlowChannelDialog(node=node, channel=1, parent=self)
+            window.setAttribute(Qt.WA_DeleteOnClose, True)
+            window.show()
+            window.destroyed.connect(lambda _, w=window: self._remove_channel_window(w))
+            self.channel_windows.append(window)
+            created += 1
 
-        self.statusbar.showMessage(f"Connected {created} flow channel window(s)")
+        self.statusbar.showMessage(f"Connected {created} instrument window(s)")
 
     def _remove_channel_window(self, window):
         if window in self.channel_windows:

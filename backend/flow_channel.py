@@ -55,10 +55,13 @@ class FlowChannelDialog(QDialog):
 
         if hasattr(self, "vs_setpoint"):
             self.vs_setpoint.valueChanged.connect(self.on_setpoint_slider_changed)
+            self.vs_setpoint.sliderReleased.connect(self.commit_setpoint_from_percent)
         if hasattr(self, "ds_setpoint_percent"):
             self.ds_setpoint_percent.valueChanged.connect(self.on_setpoint_percent_changed)
+            self.ds_setpoint_percent.editingFinished.connect(self.commit_setpoint_from_percent)
         if hasattr(self, "ds_setpoint_flow"):
             self.ds_setpoint_flow.valueChanged.connect(self.on_setpoint_flow_changed)
+            self.ds_setpoint_flow.editingFinished.connect(self.commit_setpoint_from_flow)
 
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
@@ -169,7 +172,6 @@ class FlowChannelDialog(QDialog):
             self.ds_setpoint_percent.blockSignals(True)
             self.ds_setpoint_percent.setValue(percent)
             self.ds_setpoint_percent.blockSignals(False)
-        self.apply_setpoint_percent(percent)
 
     def on_setpoint_percent_changed(self, percent: float):
         if not hasattr(self, "vs_setpoint"):
@@ -179,8 +181,6 @@ class FlowChannelDialog(QDialog):
             self.vs_setpoint.blockSignals(True)
             self.vs_setpoint.setValue(slider_value)
             self.vs_setpoint.blockSignals(False)
-
-        self.apply_setpoint_percent(percent)
 
         if self.capacity_value and hasattr(self, "ds_setpoint_flow"):
             flow_value = (percent / 100.0) * self.capacity_value
@@ -196,7 +196,17 @@ class FlowChannelDialog(QDialog):
                 self.ds_setpoint_percent.blockSignals(True)
                 self.ds_setpoint_percent.setValue(percent)
                 self.ds_setpoint_percent.blockSignals(False)
-                self.apply_setpoint_percent(percent)
+
+    def commit_setpoint_from_percent(self):
+        if not hasattr(self, "ds_setpoint_percent"):
+            return
+        self.apply_setpoint_percent(float(self.ds_setpoint_percent.value()))
+
+    def commit_setpoint_from_flow(self):
+        if not hasattr(self, "ds_setpoint_flow") or not self.capacity_value or self.capacity_value <= 0:
+            return
+        percent = max(0.0, min(100.0, (self.ds_setpoint_flow.value() / self.capacity_value) * 100.0))
+        self.apply_setpoint_percent(percent)
 
     def apply_setpoint_percent(self, percent: float):
         if self.is_dmfm:

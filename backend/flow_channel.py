@@ -274,6 +274,15 @@ class FlowChannelDialog(QDialog):
         percent = max(0.0, min(100.0, (self.ds_setpoint_flow.value() / self.capacity_value) * 100.0))
         self.apply_setpoint_percent(percent)
 
+    def _is_user_editing_setpoint(self) -> bool:
+        if hasattr(self, "vs_setpoint") and self.vs_setpoint.isSliderDown():
+            return True
+        if hasattr(self, "ds_setpoint_percent") and self.ds_setpoint_percent.hasFocus():
+            return True
+        if hasattr(self, "ds_setpoint_flow") and self.ds_setpoint_flow.hasFocus():
+            return True
+        return False
+
     def apply_setpoint_percent(self, percent: float):
         if self.is_dmfm:
             return
@@ -304,6 +313,9 @@ class FlowChannelDialog(QDialog):
 
         if setpoint_raw is not None:
             setpoint_percent = max(0.0, min(100.0, (float(setpoint_raw) / 32000.0) * 100.0))
+            if self._is_user_editing_setpoint():
+                return
+
             if hasattr(self, "ds_setpoint_percent") and abs(self.ds_setpoint_percent.value() - setpoint_percent) > 0.5:
                 self.ds_setpoint_percent.blockSignals(True)
                 self.ds_setpoint_percent.setValue(setpoint_percent)
@@ -312,6 +324,13 @@ class FlowChannelDialog(QDialog):
                 self.vs_setpoint.blockSignals(True)
                 self.vs_setpoint.setValue(int(round(setpoint_percent)))
                 self.vs_setpoint.blockSignals(False)
+
+            if self.capacity_value and hasattr(self, "ds_setpoint_flow"):
+                setpoint_flow = (setpoint_percent / 100.0) * self.capacity_value
+                if abs(self.ds_setpoint_flow.value() - setpoint_flow) > 1e-6:
+                    self.ds_setpoint_flow.blockSignals(True)
+                    self.ds_setpoint_flow.setValue(setpoint_flow)
+                    self.ds_setpoint_flow.blockSignals(False)
 
     def closeEvent(self, event):
         self.timer.stop()

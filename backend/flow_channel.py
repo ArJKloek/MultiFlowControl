@@ -16,6 +16,7 @@ class FlowChannelDialog(QDialog):
         super().__init__(parent)
         self.node = node
         self.channel = channel
+        self._loading_fluids = False
 
         node_type = (self.node.type_name or "").upper()
         self.is_dmfm = "DMFM" in node_type
@@ -52,6 +53,8 @@ class FlowChannelDialog(QDialog):
         self.btnAdvanced.clicked.connect(self.toggle_advanced)
         self.pb_reload.clicked.connect(self.reload_all)
         self.le_usertag.editingFinished.connect(self.update_usertag)
+        if hasattr(self, "cb_fluids"):
+            self.cb_fluids.currentIndexChanged.connect(self.on_fluid_selection_changed)
 
         if hasattr(self, "vs_setpoint"):
             self.vs_setpoint.valueChanged.connect(self.on_setpoint_slider_changed)
@@ -68,6 +71,7 @@ class FlowChannelDialog(QDialog):
         self.timer.timeout.connect(self.refresh_live_values)
 
         self.reload_all()
+    self.load_available_fluids()
         self.timer.start()
 
     def _setup_icon(self):
@@ -121,6 +125,7 @@ class FlowChannelDialog(QDialog):
             return False
 
     def reload_all(self):
+        current_fluid_index = self.safe_read(24)
         usertag = self.safe_read(115)
         model = self.safe_read(91)
         fluid = self.safe_read(25)
@@ -133,6 +138,8 @@ class FlowChannelDialog(QDialog):
             self.le_model.setText(str(model))
         if fluid is not None:
             self.le_fluid.setText(str(fluid))
+        if current_fluid_index is not None:
+            self._set_fluid_combo_selection(int(current_fluid_index))
 
         if unit is not None:
             if hasattr(self, "lb_unit1"):
@@ -155,6 +162,64 @@ class FlowChannelDialog(QDialog):
         self.refresh_live_values()
         if not self.last_status:
             self.set_status("Ready")
+
+    def _set_fluid_combo_selection(self, fluid_index: int):
+        if not hasattr(self, "cb_fluids") or self.cb_fluids.count() == 0:
+            return
+
+        for combo_index in range(self.cb_fluids.count()):
+            item_data = self.cb_fluids.itemData(combo_index)
+            if item_data == fluid_index:
+                self.cb_fluids.blockSignals(True)
+                self.cb_fluids.setCurrentIndex(combo_index)
+                self.cb_fluids.blockSignals(False)
+                return
+
+    def load_available_fluids(self):
+        if not hasattr(self, "cb_fluids"):
+            return
+
+        original_index = self.safe_read(24)
+        if original_index is None:
+            return
+
+        self._loading_fluids = True
+        self.cb_fluids.blockSignals(True)
+        self.cb_fluids.clear()
+
+        try:
+            for fluid_index in range(0, 9):
+                if not self.safe_write(24, fluid_index):
+                    continue
+
+                fluid_name = self.safe_read(25)
+                fluid_props = self.safe_read(238)
+                if fluid_name is None:
+                    continue
+
+                props_value = int(fluid_props) if fluid_props is not None else 0
+                if not (props_value & 0x01):
+                    continue
+
+                display_name = str(fluid_name).strip() or f"Fluid {fluid_index}"
+                self.cb_fluids.addItem(f"{fluid_index}: {display_name}", fluid_index)
+        finally:
+            self.safe_write(24, original_index)
+            self.cb_fluids.blockSignals(False)
+            self._loading_fluids = False
+
+        self._set_fluid_combo_selection(int(original_index))
+
+    def on_fluid_selection_changed(self, combo_index: int):
+        if self._loading_fluids or not hasattr(self, "cb_fluids"):
+            return
+
+        fluid_index = self.cb_fluids.itemData(combo_index)
+        if fluid_index is None:
+            return
+
+        if self.safe_write(24, int(fluid_index)):
+            self.reload_all()
 
     def toggle_advanced(self):
         if hasattr(self, "advancedFrame"):

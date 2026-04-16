@@ -71,7 +71,7 @@ class FlowChannelDialog(QDialog):
         self.timer.timeout.connect(self.refresh_live_values)
 
         self.reload_all()
-    self.load_available_fluids()
+        self.load_available_fluids()
         self.timer.start()
 
     def _setup_icon(self):

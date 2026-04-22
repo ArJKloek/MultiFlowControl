@@ -10,7 +10,9 @@ from PyQt5.QtWidgets import QDialog
 
 from .constants import (
     ICON_DIR,
+    INTERACTION_POLL_SUSPEND_MS,
     LOG_INTERVAL_MS,
+    MEASURE_PERCENT_POLL_INTERVAL_MS,
     MEASURE_FLOW_UI_EPSILON,
     MEASURE_PERCENT_UI_EPSILON,
     POLL_INTERVAL_MS,
@@ -34,6 +36,9 @@ class FlowChannelDialog(QDialog):
         self._measure_acc_flow_comp: list = []
         self._last_flush_ts: float = 0.0
         self._last_setpoint_poll_ts: float = 0.0
+        self._last_measure_percent_poll_ts: float = 0.0
+        self._cached_measure_percent: Optional[float] = None
+        self._poll_suspend_until: float = 0.0
 
         node_type = (self.node.type_name or "").upper()
         self.is_dmfm = "DMFM" in node_type
@@ -318,11 +323,18 @@ class FlowChannelDialog(QDialog):
             )
 
     def refresh_live_values(self):
-        measure_raw = self.safe_read(8)
+        now = time.monotonic()
+        if now < self._poll_suspend_until:
+            return
+
+        measure_raw = None
+        if (now - self._last_measure_percent_poll_ts) * 1000 >= MEASURE_PERCENT_POLL_INTERVAL_MS:
+            measure_raw = self.safe_read(8)
+            self._last_measure_percent_poll_ts = now
+
         measure_flow = self.safe_read(205)
         setpoint_raw = None
         if not self.is_dmfm:
-            now = time.monotonic()
             if (now - self._last_setpoint_poll_ts) * 1000 >= SETPOINT_POLL_INTERVAL_MS:
                 setpoint_raw = self.safe_read(9)
                 self._last_setpoint_poll_ts = now
@@ -332,6 +344,7 @@ class FlowChannelDialog(QDialog):
 
         if measure_raw is not None:
             measure_percent = max(0.0, min(100.0, (float(measure_raw) / 32000.0) * 100.0))
+            self._cached_measure_percent = measure_percent
             if hasattr(self, "ds_measure_percent") and abs(self.ds_measure_percent.value() - measure_percent) > MEASURE_PERCENT_UI_EPSILON:
                 self.ds_measure_percent.setValue(measure_percent)
             m_percent_int = int(round(measure_percent))
@@ -342,6 +355,8 @@ class FlowChannelDialog(QDialog):
 
             if measure_flow is None and self.capacity_value:
                 measure_flow = (measure_percent / 100.0) * self.capacity_value
+        elif measure_flow is None and self.capacity_value and self._cached_measure_percent is not None:
+            measure_flow = (self._cached_measure_percent / 100.0) * self.capacity_value
 
         if measure_flow is not None:
             flow_float = safe_float(measure_flow)
@@ -451,6 +466,17 @@ class FlowChannelDialog(QDialog):
             if widget is not None:
                 return widget.text().strip()
         return ""
+
+    def _suspend_polling_for_interaction(self) -> None:
+        self._poll_suspend_until = time.monotonic() + (INTERACTION_POLL_SUSPEND_MS / 1000.0)
+
+    def moveEvent(self, event):
+        self._suspend_polling_for_interaction()
+        super().moveEvent(event)
+
+    def resizeEvent(self, event):
+        self._suspend_polling_for_interaction()
+        super().resizeEvent(event)
 
     def closeEvent(self, event):
         self.timer.stop()

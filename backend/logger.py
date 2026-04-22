@@ -17,9 +17,11 @@ class SessionLogger:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._file = open(path, "w", newline="", encoding="utf-8")
+        file_exists = path.exists()
+        self._file = open(path, "a", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
-        self._writer.writerow(self.COLUMNS)
+        if not file_exists or path.stat().st_size == 0:
+            self._writer.writerow(self.COLUMNS)
         self._file.flush()
 
     @property
@@ -78,11 +80,10 @@ class SessionLogger:
 def make_log_path(log_dir: Path, usertag: str, port: str, address: int) -> Path:
     """Return a per-channel log file path.
 
-    Filename pattern: log_{usertag}_{timestamp}.csv
-    Falls back to log_{port_slug}_addr{address}_{timestamp}.csv when usertag is empty.
+    Filename pattern: log_{usertag}.csv
+    Falls back to log_{port_slug}_addr{address}.csv when usertag is empty.
     """
     slug = re.sub(r"[^\w\-]", "_", usertag.strip()) if usertag.strip() else ""
     if not slug:
         slug = re.sub(r"[^\w\-]", "_", port) + f"_addr{address}"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return log_dir / f"log_{slug}_{timestamp}.csv"
+    return log_dir / f"log_{slug}.csv"

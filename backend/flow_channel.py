@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from typing import Optional
 
 import propar
@@ -8,7 +9,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QDialog
 
 from .constants import ICON_DIR, LOG_INTERVAL_MS, POLL_INTERVAL_MS, UI_DIR
-from .logger import SessionLogger
+from .logger import SessionLogger, make_log_path
 from .models import NodeInfo
 from .utils import safe_float
 
@@ -371,6 +372,25 @@ class FlowChannelDialog(QDialog):
                     self.ds_setpoint_flow.setValue(setpoint_flow)
                     self.ds_setpoint_flow.blockSignals(False)
 
+    def start_logging(self, log_dir: Path) -> None:
+        """Create a per-channel log file named after the usertag (or port/address fallback)."""
+        if self.logger is not None:
+            return
+        path = make_log_path(log_dir, self.le_usertag.text(), self.node.port, self.node.address)
+        self.logger = SessionLogger(path)
+        self._measure_acc_flow.clear()
+        self._measure_acc_percent.clear()
+        self._last_flush_ts = time.monotonic()
+        self.set_status(f"Logging to {path.name}")
+
+    def stop_logging(self) -> None:
+        """Flush and close the per-channel log file."""
+        if self.logger is not None:
+            self.logger.close()
+            self.logger = None
+        self._measure_acc_flow.clear()
+        self._measure_acc_percent.clear()
+
     def set_logger(self, logger: Optional[SessionLogger]) -> None:
         """Attach or detach a SessionLogger. Clears any accumulated samples."""
         self.logger = logger
@@ -388,4 +408,5 @@ class FlowChannelDialog(QDialog):
 
     def closeEvent(self, event):
         self.timer.stop()
+        self.stop_logging()
         super().closeEvent(event)

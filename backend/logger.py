@@ -1,4 +1,5 @@
 import csv
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -72,3 +73,16 @@ class SessionLogger:
     def close(self) -> None:
         if self._file and not self._file.closed:
             self._file.close()
+
+
+def make_log_path(log_dir: Path, usertag: str, port: str, address: int) -> Path:
+    """Return a per-channel log file path.
+
+    Filename pattern: log_{usertag}_{timestamp}.csv
+    Falls back to log_{port_slug}_addr{address}_{timestamp}.csv when usertag is empty.
+    """
+    slug = re.sub(r"[^\w\-]", "_", usertag.strip()) if usertag.strip() else ""
+    if not slug:
+        slug = re.sub(r"[^\w\-]", "_", port) + f"_addr{address}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return log_dir / f"log_{slug}_{timestamp}.csv"

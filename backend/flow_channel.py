@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 
 import propar
@@ -6,7 +7,8 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QDialog
 
-from .constants import ICON_DIR, POLL_INTERVAL_MS, UI_DIR
+from .constants import ICON_DIR, LOG_INTERVAL_MS, POLL_INTERVAL_MS, UI_DIR
+from .logger import SessionLogger
 from .models import NodeInfo
 from .utils import safe_float
 
@@ -17,6 +19,11 @@ class FlowChannelDialog(QDialog):
         self.node = node
         self.channel = channel
         self._loading_fluids = False
+
+        self.logger: Optional[SessionLogger] = None
+        self._measure_acc_flow: list = []
+        self._measure_acc_percent: list = []
+        self._last_flush_ts: float = 0.0
 
         node_type = (self.node.type_name or "").upper()
         self.is_dmfm = "DMFM" in node_type
@@ -287,15 +294,28 @@ class FlowChannelDialog(QDialog):
         if self.is_dmfm:
             return
         raw_setpoint = int(max(0, min(32000, round((percent / 100.0) * 32000))))
-        self.safe_write(9, raw_setpoint)
+        if self.safe_write(9, raw_setpoint) and self.logger is not None:
+            flow = (percent / 100.0) * self.capacity_value if self.capacity_value else 0.0
+            self.logger.log_setpoint(
+                port=self.node.port,
+                address=self.node.address,
+                setpoint_flow=flow,
+                setpoint_percent=percent,
+                unit=self._current_unit(),
+                usertag=self.le_usertag.text().strip(),
+            )
 
     def refresh_live_values(self):
         measure_raw = self.safe_read(8)
         measure_flow = self.safe_read(205)
         setpoint_raw = self.safe_read(9) if not self.is_dmfm else None
 
+        _log_measure_percent: Optional[float] = None
+        _log_flow_float: Optional[float] = None
+
         if measure_raw is not None:
             measure_percent = max(0.0, min(100.0, (float(measure_raw) / 32000.0) * 100.0))
+            _log_measure_percent = measure_percent
             if hasattr(self, "ds_measure_percent"):
                 self.ds_measure_percent.setValue(measure_percent)
             if hasattr(self, "vs_measure"):
@@ -310,6 +330,25 @@ class FlowChannelDialog(QDialog):
             flow_float = safe_float(measure_flow)
             if flow_float is not None:
                 self.ds_measure_flow.setValue(flow_float)
+                _log_flow_float = flow_float
+
+        if self.logger is not None and _log_measure_percent is not None and _log_flow_float is not None:
+            self._measure_acc_flow.append(_log_flow_float)
+            self._measure_acc_percent.append(_log_measure_percent)
+            if (time.monotonic() - self._last_flush_ts) * 1000 >= LOG_INTERVAL_MS:
+                n = len(self._measure_acc_flow)
+                self.logger.log_measure(
+                    port=self.node.port,
+                    address=self.node.address,
+                    measure_flow=sum(self._measure_acc_flow) / n,
+                    measure_percent=sum(self._measure_acc_percent) / n,
+                    unit=self._current_unit(),
+                    sample_count=n,
+                    usertag=self.le_usertag.text().strip(),
+                )
+                self._measure_acc_flow.clear()
+                self._measure_acc_percent.clear()
+                self._last_flush_ts = time.monotonic()
 
         if setpoint_raw is not None:
             setpoint_percent = max(0.0, min(100.0, (float(setpoint_raw) / 32000.0) * 100.0))
@@ -331,6 +370,21 @@ class FlowChannelDialog(QDialog):
                     self.ds_setpoint_flow.blockSignals(True)
                     self.ds_setpoint_flow.setValue(setpoint_flow)
                     self.ds_setpoint_flow.blockSignals(False)
+
+    def set_logger(self, logger: Optional[SessionLogger]) -> None:
+        """Attach or detach a SessionLogger. Clears any accumulated samples."""
+        self.logger = logger
+        self._measure_acc_flow.clear()
+        self._measure_acc_percent.clear()
+        self._last_flush_ts = time.monotonic()
+
+    def _current_unit(self) -> str:
+        """Return the unit string currently shown in the dialog, or empty string."""
+        for attr in ("lb_unit", "lb_unit1", "lb_unit2"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                return widget.text().strip()
+        return ""
 
     def closeEvent(self, event):
         self.timer.stop()

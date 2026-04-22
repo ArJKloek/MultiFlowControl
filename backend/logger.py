@@ -61,16 +61,36 @@ class SessionLogger:
         self,
         port: str,
         address: int,
-        measure_flow: float,
-        measure_percent: float,
+        compensated_flow: float,
+        raw_flow: float,
         unit: str = "",
         sample_count: int = 0,
+        gasfactor: float = 1.0,
         usertag: str = "",
     ) -> None:
-        """Log a periodic measurement summary (two rows: flow average and raw percent average)."""
-        extra = f"{sample_count} samples" if sample_count > 0 else ""
-        self._write_row(port, address, "measure", "fMeasure", measure_flow, unit=unit, extra=extra, usertag=usertag)
-        self._write_row(port, address, "measure", "fMeasure_raw", measure_percent, extra=extra, usertag=usertag)
+        """Log a periodic measurement summary.
+
+        fMeasure is gasfactor-compensated flow, fMeasure_raw is original measured flow.
+        """
+        extra_parts = []
+        if sample_count > 0:
+            extra_parts.append(f"{sample_count} samples")
+        if abs(gasfactor - 1.0) > 1e-9:
+            extra_parts.append(f"gasfactor={gasfactor:.6f}")
+        extra = "; ".join(extra_parts)
+        self._write_row(port, address, "measure", "fMeasure", compensated_flow, unit=unit, extra=extra, usertag=usertag)
+        self._write_row(port, address, "measure", "fMeasure_raw", raw_flow, unit=unit, extra=extra, usertag=usertag)
+
+    def log_gasfactor(
+        self,
+        port: str,
+        address: int,
+        gasfactor: float,
+        usertag: str = "",
+        extra: str = "",
+    ) -> None:
+        """Log an explicit gasfactor event."""
+        self._write_row(port, address, "config", "gasfactor", gasfactor, extra=extra, usertag=usertag)
 
     def close(self) -> None:
         if self._file and not self._file.closed:

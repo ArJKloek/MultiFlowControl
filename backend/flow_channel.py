@@ -22,8 +22,8 @@ class FlowChannelDialog(QDialog):
         self._loading_fluids = False
 
         self.logger: Optional[SessionLogger] = None
-        self._measure_acc_flow: list = []
-        self._measure_acc_percent: list = []
+        self._measure_acc_flow_raw: list = []
+        self._measure_acc_flow_comp: list = []
         self._last_flush_ts: float = 0.0
 
         node_type = (self.node.type_name or "").upper()
@@ -73,6 +73,8 @@ class FlowChannelDialog(QDialog):
         if hasattr(self, "ds_setpoint_flow"):
             self.ds_setpoint_flow.valueChanged.connect(self.on_setpoint_flow_changed)
             self.ds_setpoint_flow.editingFinished.connect(self.commit_setpoint_from_flow)
+        if hasattr(self, "ds_gasfactor"):
+            self.ds_gasfactor.valueChanged.connect(self.on_gasfactor_changed)
 
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
@@ -311,12 +313,11 @@ class FlowChannelDialog(QDialog):
         measure_flow = self.safe_read(205)
         setpoint_raw = self.safe_read(9) if not self.is_dmfm else None
 
-        _log_measure_percent: Optional[float] = None
-        _log_flow_float: Optional[float] = None
+        _log_flow_raw: Optional[float] = None
+        _log_flow_comp: Optional[float] = None
 
         if measure_raw is not None:
             measure_percent = max(0.0, min(100.0, (float(measure_raw) / 32000.0) * 100.0))
-            _log_measure_percent = measure_percent
             if hasattr(self, "ds_measure_percent"):
                 self.ds_measure_percent.setValue(measure_percent)
             if hasattr(self, "vs_measure"):
@@ -330,25 +331,29 @@ class FlowChannelDialog(QDialog):
         if measure_flow is not None:
             flow_float = safe_float(measure_flow)
             if flow_float is not None:
-                self.ds_measure_flow.setValue(flow_float)
-                _log_flow_float = flow_float
+                gasfactor = self._current_gasfactor()
+                flow_comp = flow_float * gasfactor
+                self.ds_measure_flow.setValue(flow_comp)
+                _log_flow_raw = flow_float
+                _log_flow_comp = flow_comp
 
-        if self.logger is not None and _log_measure_percent is not None and _log_flow_float is not None:
-            self._measure_acc_flow.append(_log_flow_float)
-            self._measure_acc_percent.append(_log_measure_percent)
+        if self.logger is not None and _log_flow_raw is not None and _log_flow_comp is not None:
+            self._measure_acc_flow_raw.append(_log_flow_raw)
+            self._measure_acc_flow_comp.append(_log_flow_comp)
             if (time.monotonic() - self._last_flush_ts) * 1000 >= LOG_INTERVAL_MS:
-                n = len(self._measure_acc_flow)
+                n = len(self._measure_acc_flow_raw)
                 self.logger.log_measure(
                     port=self.node.port,
                     address=self.node.address,
-                    measure_flow=sum(self._measure_acc_flow) / n,
-                    measure_percent=sum(self._measure_acc_percent) / n,
+                    compensated_flow=sum(self._measure_acc_flow_comp) / n,
+                    raw_flow=sum(self._measure_acc_flow_raw) / n,
                     unit=self._current_unit(),
                     sample_count=n,
+                    gasfactor=self._current_gasfactor(),
                     usertag=self.le_usertag.text().strip(),
                 )
-                self._measure_acc_flow.clear()
-                self._measure_acc_percent.clear()
+                self._measure_acc_flow_raw.clear()
+                self._measure_acc_flow_comp.clear()
                 self._last_flush_ts = time.monotonic()
 
         if setpoint_raw is not None:
@@ -378,25 +383,50 @@ class FlowChannelDialog(QDialog):
             return
         path = make_log_path(log_dir, self.le_usertag.text(), self.node.port, self.node.address)
         self.logger = SessionLogger(path)
-        self._measure_acc_flow.clear()
-        self._measure_acc_percent.clear()
+        self._measure_acc_flow_raw.clear()
+        self._measure_acc_flow_comp.clear()
         self._last_flush_ts = time.monotonic()
+        gasfactor = self._current_gasfactor()
+        if abs(gasfactor - 1.0) > 1e-9:
+            self.logger.log_gasfactor(
+                port=self.node.port,
+                address=self.node.address,
+                gasfactor=gasfactor,
+                usertag=self.le_usertag.text().strip(),
+                extra="logging start",
+            )
         self.set_status(f"Logging to {path.name}")
+
+    def on_gasfactor_changed(self, value: float) -> None:
+        if self.logger is None:
+            return
+        self.logger.log_gasfactor(
+            port=self.node.port,
+            address=self.node.address,
+            gasfactor=float(value),
+            usertag=self.le_usertag.text().strip(),
+            extra="manual change",
+        )
 
     def stop_logging(self) -> None:
         """Flush and close the per-channel log file."""
         if self.logger is not None:
             self.logger.close()
             self.logger = None
-        self._measure_acc_flow.clear()
-        self._measure_acc_percent.clear()
+        self._measure_acc_flow_raw.clear()
+        self._measure_acc_flow_comp.clear()
 
     def set_logger(self, logger: Optional[SessionLogger]) -> None:
         """Attach or detach a SessionLogger. Clears any accumulated samples."""
         self.logger = logger
-        self._measure_acc_flow.clear()
-        self._measure_acc_percent.clear()
+        self._measure_acc_flow_raw.clear()
+        self._measure_acc_flow_comp.clear()
         self._last_flush_ts = time.monotonic()
+
+    def _current_gasfactor(self) -> float:
+        if hasattr(self, "ds_gasfactor"):
+            return float(self.ds_gasfactor.value())
+        return 1.0
 
     def _current_unit(self) -> str:
         """Return the unit string currently shown in the dialog, or empty string."""

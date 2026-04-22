@@ -8,7 +8,15 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QDialog
 
-from .constants import ICON_DIR, LOG_INTERVAL_MS, POLL_INTERVAL_MS, UI_DIR
+from .constants import (
+    ICON_DIR,
+    LOG_INTERVAL_MS,
+    MEASURE_FLOW_UI_EPSILON,
+    MEASURE_PERCENT_UI_EPSILON,
+    POLL_INTERVAL_MS,
+    SETPOINT_POLL_INTERVAL_MS,
+    UI_DIR,
+)
 from .logger import SessionLogger, make_log_path
 from .models import NodeInfo
 from .utils import safe_float
@@ -25,6 +33,7 @@ class FlowChannelDialog(QDialog):
         self._measure_acc_flow_raw: list = []
         self._measure_acc_flow_comp: list = []
         self._last_flush_ts: float = 0.0
+        self._last_setpoint_poll_ts: float = 0.0
 
         node_type = (self.node.type_name or "").upper()
         self.is_dmfm = "DMFM" in node_type
@@ -311,19 +320,25 @@ class FlowChannelDialog(QDialog):
     def refresh_live_values(self):
         measure_raw = self.safe_read(8)
         measure_flow = self.safe_read(205)
-        setpoint_raw = self.safe_read(9) if not self.is_dmfm else None
+        setpoint_raw = None
+        if not self.is_dmfm:
+            now = time.monotonic()
+            if (now - self._last_setpoint_poll_ts) * 1000 >= SETPOINT_POLL_INTERVAL_MS:
+                setpoint_raw = self.safe_read(9)
+                self._last_setpoint_poll_ts = now
 
         _log_flow_raw: Optional[float] = None
         _log_flow_comp: Optional[float] = None
 
         if measure_raw is not None:
             measure_percent = max(0.0, min(100.0, (float(measure_raw) / 32000.0) * 100.0))
-            if hasattr(self, "ds_measure_percent"):
+            if hasattr(self, "ds_measure_percent") and abs(self.ds_measure_percent.value() - measure_percent) > MEASURE_PERCENT_UI_EPSILON:
                 self.ds_measure_percent.setValue(measure_percent)
-            if hasattr(self, "vs_measure"):
-                self.vs_measure.setValue(int(round(measure_percent)))
-            if hasattr(self, "pb_flow"):
-                self.pb_flow.setValue(int(round(measure_percent)))
+            m_percent_int = int(round(measure_percent))
+            if hasattr(self, "vs_measure") and self.vs_measure.value() != m_percent_int:
+                self.vs_measure.setValue(m_percent_int)
+            if hasattr(self, "pb_flow") and self.pb_flow.value() != m_percent_int:
+                self.pb_flow.setValue(m_percent_int)
 
             if measure_flow is None and self.capacity_value:
                 measure_flow = (measure_percent / 100.0) * self.capacity_value
@@ -333,7 +348,8 @@ class FlowChannelDialog(QDialog):
             if flow_float is not None:
                 gasfactor = self._current_gasfactor()
                 flow_comp = flow_float * gasfactor
-                self.ds_measure_flow.setValue(flow_comp)
+                if abs(self.ds_measure_flow.value() - flow_comp) > MEASURE_FLOW_UI_EPSILON:
+                    self.ds_measure_flow.setValue(flow_comp)
                 _log_flow_raw = flow_float
                 _log_flow_comp = flow_comp
 

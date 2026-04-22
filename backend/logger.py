@@ -14,9 +14,11 @@ class SessionLogger:
 
     COLUMNS = ["ts", "iso", "port", "address", "kind", "name", "value", "unit", "extra", "usertag"]
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, flush_interval_s: float = 1.0):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
+        self._flush_interval_s = max(0.0, float(flush_interval_s))
+        self._last_flush_ts = time.monotonic()
         file_exists = path.exists()
         self._file = open(path, "a", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
@@ -42,7 +44,15 @@ class SessionLogger:
         now = time.time()
         iso = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
         self._writer.writerow([f"{now:.3f}", iso, port, address, kind, name, value, unit, extra, usertag])
-        self._file.flush()
+        if self._flush_interval_s == 0.0:
+            self._file.flush()
+            self._last_flush_ts = time.monotonic()
+            return
+
+        t_now = time.monotonic()
+        if (t_now - self._last_flush_ts) >= self._flush_interval_s:
+            self._file.flush()
+            self._last_flush_ts = t_now
 
     def log_setpoint(
         self,
@@ -94,6 +104,7 @@ class SessionLogger:
 
     def close(self) -> None:
         if self._file and not self._file.closed:
+            self._file.flush()
             self._file.close()
 
 
